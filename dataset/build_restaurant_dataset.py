@@ -15,7 +15,7 @@ DEBUG_CSV = "restaurant_dataset_debug.csv"
 CHECKPOINT_JSONL = "restaurant_dataset_checkpoint.jsonl"
 
 PINECONE_API_KEY = "xxx"
-INDEX_NAME = "restaurant-recommendation"
+INDEX_NAME = "restaurant"
 OPENAI_API_KEY = "xxx"
 LLM_MODEL = "gpt-4.1-mini"
 
@@ -27,7 +27,6 @@ PINECONE_MAX_RETRIES = 4
 LLM_MAX_RETRIES = 4
 SAVE_EVERY = 10
 
-# Reuse embedding function giống notebook của bạn
 from embed_model import embed_text
 
 JSON_FALLBACK_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
@@ -45,23 +44,103 @@ def normalize_restaurant_id(value: Any) -> str:
         return text
 
 
-# Các cột ưu tiên dùng để tóm tắt quán cho LLM
-TEXT_FIELDS = [
-    "Name", "Address", "District", "Area", "PriceMin", "PriceMax",
-    "MetaKeywords", "Cuisines", "LstTargetAudience", "LstCategory", "AccessGuide",
-    "Vị trí", "Giá cả", "Chất lượng", "Phục vụ", "Không gian",
-    "Excellent", "Good", "Average", "Bad",
-    "HasBooking", "HasDelivery", "HasPromotion",
-    "TotalView", "TotalFavourite", "TotalCheckins",
-    "Giao tận nơi", "Đặt bàn"
+FULL_DAYS = ["Chủ nhật", "Thứ hai", "Thứ ba", "Thứ tư", "Thứ năm", "Thứ sáu", "Thứ bảy"]
+VIEW_BINS = [-float("inf"), 28, 58, 106, 235, 893, float("inf")]
+VIEW_LABELS = [
+    "rất ít lượt xem",
+    "Ít lượt xem",
+    "Lượt xem trung bình",
+    "Nhiều lượt xem",
+    "Rất nhiều lượt xem",
+    "Thịnh hành",
 ]
+
+TEXT_FIELDS = [
+    "Name",
+    "Address",
+    "District",
+    "Area",
+    "PriceMin",
+    "PriceMax",
+    "MetaKeywords",
+    "Cuisines",
+    "LstTargetAudience",
+    "LstCategory",
+    "View Category",
+    "Chất lượng",
+    "Phục vụ",
+    "Không gian",
+    "DominantReview",
+    "TotalFavourite",
+    "TotalCheckins",
+    "Giao tận nơi",
+    "Đặt bàn",
+    "Ngày bán",
+    "Chủ nhật",
+    "Thứ hai",
+    "Thứ ba",
+    "Thứ tư",
+    "Thứ năm",
+    "Thứ sáu",
+    "Thứ bảy",
+]
+
+
+def get_selling_days(off_str: Any) -> str:
+    if pd.isna(off_str):
+        return ", ".join(FULL_DAYS)
+
+    text = str(off_str).strip()
+    if not text:
+        return ", ".join(FULL_DAYS)
+
+    off_list = [day.strip() for day in text.split("||") if day.strip()]
+    selling_days = [day for day in FULL_DAYS if day not in off_list]
+    return ", ".join(selling_days)
+
+
+def preprocess_restaurant_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    if "Ngày nghỉ" in df.columns:
+        df["Ngày bán"] = df["Ngày nghỉ"].apply(get_selling_days)
+    else:
+        df["Ngày bán"] = ", ".join(FULL_DAYS)
+
+    if "TotalView" in df.columns:
+        total_view_numeric = pd.to_numeric(df["TotalView"], errors="coerce")
+        df["View Category"] = pd.cut(
+            total_view_numeric,
+            bins=VIEW_BINS,
+            labels=VIEW_LABELS,
+            include_lowest=True,
+        )
+        df["View Category"] = df["View Category"].astype(str)
+    else:
+        df["View Category"] = ""
+
+    for col in ("LstTargetAudience", "LstCategory"):
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.replace(" || ", ", ", regex=False)
+            df[col] = df[col].str.replace("||", ", ", regex=False)
+
+    if all(col in df.columns for col in ("Excellent", "Good", "Average", "Bad")):
+        df["DominantReview"] = df.apply(get_dominant_review_label, axis=1)
+    else:
+        df["DominantReview"] = ""
+
+    return df
 
 
 def load_restaurant_df(csv_path: str) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
+    df = preprocess_restaurant_df(df)
     df = df.fillna("")
     for col in df.columns:
         df[col] = df[col].astype(str)
+    for day in FULL_DAYS:
+        if day in df.columns:
+            df[day] = df[day].apply(format_opening_hours)
     if "RestaurantID" not in df.columns:
         raise ValueError("CSV phải có cột RestaurantID")
     df["RestaurantID"] = df["RestaurantID"].apply(normalize_restaurant_id)
@@ -85,12 +164,44 @@ def fallback_text(value: Any, default: str = "Không xác định") -> str:
     return text if text else default
 
 
+def to_float(value: Any) -> float:
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return 0.0
+
+
+def get_dominant_review_label(row: pd.Series) -> str:
+    review_counts = {
+        "Bad": to_float(row.get("Bad", 0)),
+        "Average": to_float(row.get("Average", 0)),
+        "Good": to_float(row.get("Good", 0)),
+        "Excellent": to_float(row.get("Excellent", 0)),
+    }
+    if all(count == 0 for count in review_counts.values()):
+        return "Chưa có review"
+    dominant_label, dominant_count = max(review_counts.items(), key=lambda item: (item[1], 0))
+    return f"{dominant_label} ({int(dominant_count) if dominant_count.is_integer() else dominant_count})"
+
+
+def format_opening_hours(value: Any) -> str:
+    text = str(value).strip()
+    if not text:
+        return "Không rõ"
+
+    match = re.match(r"^\('([^']*)',\s*'([^']*)'\)$", text)
+    if match:
+        open_time, close_time = match.groups()
+        return f"{open_time} - {close_time}"
+
+    return text
+
+
 def row_to_text(row: pd.Series) -> str:
     name = row.get("Name", "")
     address = row.get("Address", "")
     district = row.get("District", "")
     area = row.get("Area", "")
-    restaurant_id = row.get("RestaurantID", "")
 
     price_min = row.get("PriceMin", "")
     price_max = row.get("PriceMax", "")
@@ -99,66 +210,48 @@ def row_to_text(row: pd.Series) -> str:
     cuisines = row.get("Cuisines", "")
     target_audience = row.get("LstTargetAudience", "")
     category = row.get("LstCategory", "")
-    access_guide = fallback_text(row.get("AccessGuide", ""))
-
-    location_rate = row.get("Vị trí", "")
-    price_rate = row.get("Giá cả", "")
-    quality_rate = row.get("Chất lượng", "")
-    service_rate = row.get("Phục vụ", "")
-    space_rate = row.get("Không gian", "")
-
-    excellent = row.get("Excellent", "")
-    good = row.get("Good", "")
-    average = row.get("Average", "")
-    bad = row.get("Bad", "")
-
-    has_booking = fallback_text(row.get("HasBooking", ""))
-    has_delivery = fallback_text(row.get("HasDelivery", ""))
-    has_promotion = fallback_text(row.get("HasPromotion", ""))
-    total_view = row.get("TotalView", "")
-    total_favorite = row.get("TotalFavourite", "")
-    total_checkin = row.get("TotalCheckins", "")
+    view_category = row.get("View Category", "")
+    selling_days = row.get("Ngày bán", "")
+    quality = row.get("Chất lượng", "")
+    service = row.get("Phục vụ", "")
+    space = row.get("Không gian", "")
+    dominant_review = row.get("DominantReview", "")
+    total_favourite = row.get("TotalFavourite", "")
+    total_checkins = row.get("TotalCheckins", "")
 
     home_delivery = "Có giao hàng tận nơi" if is_truthy_flag(row.get("Giao tận nơi", "")) else "Không có giao hàng tận nơi"
     order_table = "Có đặt bàn" if is_truthy_flag(row.get("Đặt bàn", "")) else "Không có đặt bàn"
+    opening_hours = [f"- {day}: {format_opening_hours(row.get(day, ''))}" for day in FULL_DAYS]
 
     parts = [
-        f"Nhà hàng: {name}",
-        f"Địa chỉ: {address}, {district}, {area}",
-        f"ID nhà hàng: {restaurant_id}",
+        f"Nhà hàng/Quán {name}",
+        f"Địa chỉ: {address}",
+        f"Nằm ở {district} trong khu vực {area}",
         "",
-        f"Giá: từ {price_min} đến {price_max} VND",
+        f"Giá từ {price_min} đến {price_max} VND",
         "",
-        f"Mô tả: {meta_keywords}",
+        f"Từ khóa: {meta_keywords}",
         f"Ẩm thực: {cuisines}",
-        f"Đối tượng mục tiêu: {target_audience}",
+        f"Đối tượng: {target_audience}",
         f"Danh mục: {category}",
-        f"Hướng dẫn đi lại: {access_guide}",
-        "",
-        "Đánh giá:",
-        f"- Vị trí: {location_rate}",
-        f"- Giá cả: {price_rate}",
-        f"- Chất lượng: {quality_rate}",
-        f"- Phục vụ: {service_rate}",
-        f"- Không gian: {space_rate}",
-        "",
-        "Số lượng đánh giá:",
-        f"- Excellent: {excellent}",
-        f"- Good: {good}",
-        f"- Average: {average}",
-        f"- Bad: {bad}",
         "",
         "Dịch vụ:",
         f"- Giao tận nơi: {home_delivery}",
         f"- Đặt bàn: {order_table}",
         "",
-        f"Tổng lượt xem: {total_view}",
-        f"Tổng lượt yêu thích: {total_favorite}",
-        f"Tổng lượt check-in: {total_checkin}",
+        f"Lượt xem: {view_category}",
+        f"Ngày bán: {selling_days}",
         "",
-        f"Có đặt bàn: {has_booking}",
-        f"Có giao hàng: {has_delivery}",
-        f"Có khuyến mãi: {has_promotion}",
+        "Đánh giá thêm:",
+        f"- Chất lượng: {quality}",
+        f"- Phục vụ: {service}",
+        f"- Không gian: {space}",
+        f"- Mức review nổi trội: {dominant_review}",
+        f"- TotalFavourite: {total_favourite}",
+        f"- TotalCheckins: {total_checkins}",
+        "",
+        "Giờ mở cửa từng ngày:",
+        *opening_hours,
     ]
 
     return "\n".join(parts)
@@ -226,19 +319,20 @@ Bạn là chuyên gia gán nhãn relevance cho bài toán truy hồi quán ăn.
 Mục tiêu:
 Với 1 query và danh sách nhà hàng, hãy gán nhãn 0-4 cho TỪNG nhà hàng.
 
-Các thuộc tính quan trọng trong dữ liệu:
-- Name: tên quán.
-- Address, District, Area: vị trí quán.
-- PriceMin, PriceMax: khoảng giá.
-- MetaKeywords, Cuisines: mô tả ngắn, loại ẩm thực, món nổi bật.
-- LstTargetAudience: nhóm khách phù hợp.
-- LstCategory: loại hình quán.
-- AccessGuide: hướng dẫn đi lại.
-- Vị trí, Giá cả, Chất lượng, Phục vụ, Không gian: điểm đánh giá từng mặt.
-- Excellent, Good, Average, Bad: số lượng đánh giá theo mức độ.
-- HasBooking, HasDelivery, HasPromotion: cờ hoặc trạng thái dịch vụ; có thể thiếu dữ liệu.
-- Giao tận nơi, Đặt bàn: cờ nhị phân cho khả năng giao hàng tận nơi / đặt bàn.
-- TotalView, TotalFavourite, TotalCheckins: tín hiệu phổ biến; chỉ dùng khi query nhắc độ nổi tiếng, đông khách, nhiều người biết đến.
+    Các thuộc tính quan trọng trong dữ liệu:
+    - Name: tên quán.
+    - Address, District, Area: vị trí quán.
+    - PriceMin, PriceMax: khoảng giá.
+    - MetaKeywords, Cuisines: từ khóa ngắn, loại ẩm thực, món nổi bật.
+    - LstTargetAudience: nhóm khách phù hợp.
+    - LstCategory: loại hình quán.
+    - Giao tận nơi, Đặt bàn: cờ nhị phân cho khả năng giao hàng tận nơi / đặt bàn.
+    - View Category: mức độ phổ biến theo lượt xem đã được chia nhóm.
+    - Chất lượng, Phục vụ, Không gian: điểm đánh giá theo từng khía cạnh.
+    - DominantReview: mức review trội nhất từ Excellent/Good/Average/Bad; nếu hòa thì đã chọn mức tệ hơn.
+    - TotalFavourite, TotalCheckins: tín hiệu bổ sung về mức độ quan tâm và ghé quán.
+    - Ngày bán: các ngày quán hoạt động.
+    - Chủ nhật đến Thứ bảy: thời gian mở cửa từng ngày.
 
 Ý nghĩa nhãn:
 - 4 = Rất phù hợp: khớp gần như đầy đủ các điều kiện quan trọng trong query; là lựa chọn rất tốt.
@@ -251,21 +345,23 @@ Các thuộc tính quan trọng trong dữ liệu:
 1. Cuisines / món ăn / keyword chính.
 2. District / Area / vị trí.
 3. PriceMin-PriceMax nếu query nói về giá.
-4. LstTargetAudience nếu query nhắc nhóm đối tượng.
-5. LstCategory / loại hình quán.
-6. Chất lượng, Phục vụ, Không gian, mức độ review nếu query có nhắc.
-7. Booking, delivery, promotion nếu query có nhắc.
-8. TotalView, TotalFavourite, TotalCheckins chỉ khi query nhắc độ nổi tiếng.
+    4. LstTargetAudience nếu query nhắc nhóm đối tượng.
+    5. LstCategory / loại hình quán.
+    6. Chất lượng, Phục vụ, Không gian, DominantReview nếu query nhắc chất lượng/review.
+    7. Ngày bán và giờ mở cửa từng ngày nếu query nhắc thời gian hoạt động.
+    8. View Category, TotalFavourite, TotalCheckins nếu query nhắc độ nổi tiếng, đông khách, được yêu thích.
+    9. Giao tận nơi, đặt bàn nếu query có nhắc.
 
 Luật chấm:
 - Không bịa thêm dữ kiện.
 - Nếu thiếu dữ liệu cho một điều kiện, không được tự đoán là có.
-- Sai cuisine hoặc sai district là lỗi nặng, thường không được label cao.
-- Nếu query nhắc khoảng giá, hãy so theo PriceMin-PriceMax; không tự suy diễn quán "rẻ" hay "đắt" nếu thiếu ngưỡng rõ ràng.
-- Nếu query nhắc giao hàng, ưu tiên xét Giao tận nơi và HasDelivery.
-- Nếu query nhắc đặt bàn, ưu tiên xét Đặt bàn và HasBooking.
-- Nếu query nhắc khuyến mãi, chỉ dùng HasPromotion khi dữ liệu thật sự có.
-- Các chỉ số TotalView, TotalFavourite, TotalCheckins không đủ để thay thế cho chất lượng món hoặc độ phù hợp chính.
+    - Sai cuisine hoặc sai district là lỗi nặng, thường không được label cao.
+    - Nếu query nhắc khoảng giá, hãy so theo PriceMin-PriceMax; không tự suy diễn quán "rẻ" hay "đắt" nếu thiếu ngưỡng rõ ràng.
+    - Nếu query nhắc chất lượng hoặc review, ưu tiên xét Chất lượng, Phục vụ, Không gian và DominantReview.
+    - Nếu query nhắc giao hàng, ưu tiên xét Giao tận nơi.
+    - Nếu query nhắc đặt bàn, ưu tiên xét Đặt bàn.
+    - Nếu query nhắc độ nổi tiếng, có thể dùng View Category, TotalFavourite, TotalCheckins như tín hiệu phụ, không thay thế món ăn/vị trí.
+    - Nếu query nhắc ngày hoặc giờ mở cửa, chỉ dùng thông tin trong Ngày bán và các cột thời gian theo từng ngày.
 - Chỉ gán 4 khi thực sự rất hợp.
 - Không cố cân bằng label; chấm trung thực theo từng quán.
 - Trả về đúng thứ tự đầu vào.
@@ -397,8 +493,6 @@ def build_rows(query_text: str, selected_rows: List[pd.Series], labels: List[Dic
             "reason": llm_item.get("reason", ""),
             "district": row.get("District", ""),
             "cuisines": row.get("Cuisines", ""),
-            "price_min": row.get("PriceMin", ""),
-            "price_max": row.get("PriceMax", ""),
         })
     return final_rows, debug_rows
 
