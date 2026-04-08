@@ -1,0 +1,10 @@
+.fade-item {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.5s ease;
+}
+
+.fade-item.show {
+    opacity: 1;
+    transform: translateY(0);
+}
