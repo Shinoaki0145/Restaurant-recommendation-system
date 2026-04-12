@@ -12,12 +12,10 @@ from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BACKEND_DIR.parent
-LEGACY_FRONTEND_DIR = PROJECT_ROOT / "restaurant_web"
 if not __package__ and str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-load_dotenv(PROJECT_ROOT / ".env")
-load_dotenv(LEGACY_FRONTEND_DIR / ".env")
+load_dotenv(BACKEND_DIR / ".env")
 
 if __package__:
     from .restaurant_ranker import DEFAULT_RESTAURANTS_PATH, normalize_restaurant_id, slugify_column_name

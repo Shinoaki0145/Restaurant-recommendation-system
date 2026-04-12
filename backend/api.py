@@ -13,12 +13,10 @@ from pydantic import BaseModel, Field
 
 BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BACKEND_DIR.parent
-LEGACY_FRONTEND_DIR = PROJECT_ROOT / "restaurant_web"
 if not __package__ and str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-load_dotenv(PROJECT_ROOT / ".env")
-load_dotenv(LEGACY_FRONTEND_DIR / ".env")
+load_dotenv(BACKEND_DIR / ".env")
 
 if __package__:
     from .restaurant_ranker import (
@@ -42,8 +40,39 @@ else:
 _service: Optional[RestaurantRankerService] = None
 _repository: Optional[RestaurantRepository] = None
 
-RESTAURANTS_PATH = Path(os.getenv("RANKER_RESTAURANTS_PATH", str(DEFAULT_RESTAURANTS_PATH)))
-ARTIFACT_PATH = Path(os.getenv("RANKER_ARTIFACT_PATH", str(DEFAULT_ARTIFACT_PATH)))
+
+def resolve_config_path(env_name: str, default_path: Path, preferred_base: Path) -> Path:
+    raw_value = (os.getenv(env_name) or "").strip()
+    if not raw_value:
+        return default_path
+
+    configured_path = Path(raw_value)
+    if configured_path.is_absolute():
+        return configured_path
+
+    candidates: list[Path] = []
+    for base_dir in (preferred_base, PROJECT_ROOT, BACKEND_DIR, Path.cwd()):
+        candidate = base_dir / configured_path
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return preferred_base / configured_path
+
+
+RESTAURANTS_PATH = resolve_config_path(
+    env_name="RANKER_RESTAURANTS_PATH",
+    default_path=DEFAULT_RESTAURANTS_PATH,
+    preferred_base=PROJECT_ROOT,
+)
+ARTIFACT_PATH = resolve_config_path(
+    env_name="RANKER_ARTIFACT_PATH",
+    default_path=DEFAULT_ARTIFACT_PATH,
+    preferred_base=BACKEND_DIR,
+)
 
 
 class RankRequest(BaseModel):

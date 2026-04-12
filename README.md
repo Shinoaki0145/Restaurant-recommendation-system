@@ -30,6 +30,9 @@ npm install
 pip install -r backend/requirements.txt
 ```
 
+Backend dung file cau hinh rieng tai `backend/.env`.
+Frontend neu can thi dung file rieng tai `restaurant_web/.env`.
+
 ## Chay du an
 
 ### Chay backend
@@ -56,6 +59,9 @@ npm run dev
 
 ## Ghi chu
 
-- Backend doc bien moi truong tu `.env` o root repo. Neu can, no van fallback sang `restaurant_web/.env` de tuong thich voi cau truc cu.
+- Backend va frontend da duoc tach rieng.
+- Backend chi doc bien moi truong tu `backend/.env`.
+- Duong dan tuong doi trong `backend/.env` se uu tien resolve theo thu muc `backend/`.
+- Frontend chi nam trong `restaurant_web/`.
 - Artifact model duoc luu trong `backend/artifacts/`.
 - Dataset van nam trong `dataset/`.
