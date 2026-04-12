@@ -1,18 +1,31 @@
-# React + Vite
+# Restaurant Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Frontend React/Vite lives here, and the restaurant ranking API now lives in [backend/api.py](./backend/api.py).
 
-Currently, two official plugins are available:
+## Run frontend
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev
+```
 
-## React Compiler
+## Run backend API
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+From inside `restaurant_web/`:
 
-Note: This will impact Vite dev & build performances.
+```bash
+npm run api
+```
 
-## Expanding the ESLint configuration
+Or directly:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+python backend/api.py
+```
+
+## Notes
+
+- Backend config is read from [`.env`](./.env).
+- Model artifacts are stored in [`artifacts/`](./artifacts).
+- Training data still stays in `../dataset/` to avoid duplicating large CSV files.
+- Inference after Pinecone is configured as Supabase-only for restaurant metadata.
