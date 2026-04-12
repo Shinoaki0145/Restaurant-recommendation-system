@@ -11,8 +11,6 @@ node_modules
 dist
 dist-ssr
 .env
-artifacts
-backend/__pycache__
 *.local
 
 # Editor directories and files
