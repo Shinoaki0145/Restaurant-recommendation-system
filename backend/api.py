@@ -9,6 +9,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -100,6 +101,14 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Restaurant Ranking API", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def get_repository() -> RestaurantRepository:
