@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import sys
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -74,33 +73,11 @@ class RestaurantRepository:
             if db_enabled is None
             else bool(db_enabled)
         )
-        self.allow_csv_fallback = (
-            str(os.getenv("RESTAURANT_ALLOW_CSV_FALLBACK", "false")).strip().lower() in {"1", "true", "yes"}
-            if allow_csv_fallback is None
-            else bool(allow_csv_fallback)
-        )
+        # Runtime inference must always use repository metadata rather than local CSV fallback.
+        self.allow_csv_fallback = False
         self.database_url = database_url or _build_database_url()
         self.table_name = table_name or os.getenv("RESTAURANT_DB_TABLE") or "restaurants"
         self.id_column = id_column or os.getenv("RESTAURANT_DB_ID_COLUMN") or "restaurant_id"
-
-    @staticmethod
-    @lru_cache(maxsize=1)
-    def _load_csv(csv_path: str) -> pd.DataFrame:
-        return pd.read_csv(csv_path, encoding="utf-8")
-
-    def _fetch_from_csv(self, restaurant_ids: list[str]) -> pd.DataFrame:
-        csv_df = self._load_csv(str(self.csv_path)).copy()
-        id_col = None
-        for candidate in ("RestaurantID", "restaurant_id", "restaurantid"):
-            if candidate in csv_df.columns:
-                id_col = candidate
-                break
-        if id_col is None:
-            raise KeyError("CSV metadata file is missing RestaurantID/restaurant_id")
-        csv_df["_restaurant_id_norm"] = csv_df[id_col].map(normalize_restaurant_id)
-        csv_df = csv_df[csv_df["_restaurant_id_norm"].isin(restaurant_ids)].copy()
-        csv_df = csv_df.drop(columns=["_restaurant_id_norm"])
-        return csv_df
 
     def _get_postgres_driver(self):
         try:
@@ -170,29 +147,16 @@ class RestaurantRepository:
                 resolved_ids = set(database_df[possible_id_col].map(normalize_restaurant_id))
 
         missing_ids = [restaurant_id for restaurant_id in normalized_ids if restaurant_id not in resolved_ids]
-        if not self.allow_csv_fallback:
-            source = "database"
-            if db_error and database_df.empty:
-                source = "database_error"
-            return database_df, {
-                "source": source,
-                "count": int(len(database_df)),
-                "requested_count": len(normalized_ids),
-                "missing_candidate_count": len(missing_ids),
-                "db_error": db_error,
-            }
-
-        csv_df = self._fetch_from_csv(missing_ids) if missing_ids else pd.DataFrame()
-
-        if database_df.empty and csv_df.empty:
-            return pd.DataFrame(), {"source": "empty", "count": 0, "db_error": db_error}
-        if database_df.empty:
-            return csv_df, {"source": "csv", "count": int(len(csv_df)), "db_error": db_error}
-        if csv_df.empty:
-            return database_df, {"source": "database", "count": int(len(database_df))}
-
-        combined = pd.concat([database_df, csv_df], ignore_index=True, sort=False)
-        return combined, {"source": "database+csv", "count": int(len(combined)), "db_error": db_error}
+        source = "database"
+        if db_error and database_df.empty:
+            source = "database_error"
+        return database_df, {
+            "source": source,
+            "count": int(len(database_df)),
+            "requested_count": len(normalized_ids),
+            "missing_candidate_count": len(missing_ids),
+            "db_error": db_error,
+        }
 
     def health(self) -> dict[str, Any]:
         db_ready = self.db_enabled and not _is_placeholder(self.database_url)

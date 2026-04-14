@@ -89,7 +89,11 @@ class RankRequest(BaseModel):
 def get_service() -> RestaurantRankerService:
     global _service
     if _service is None:
-        _service = RestaurantRankerService.load_existing(artifact_path=ARTIFACT_PATH)
+        _service = RestaurantRankerService.load_or_train(
+            artifact_path=ARTIFACT_PATH,
+            restaurants_path=RESTAURANTS_PATH,
+            metrics_path=ARTIFACT_PATH.with_name("restaurant_ranker_metrics.json"),
+        )
     return _service
 
 

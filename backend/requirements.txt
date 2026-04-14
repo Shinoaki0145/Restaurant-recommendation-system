@@ -4,7 +4,6 @@ python-dotenv
 pandas
 numpy
 scikit-learn
-xgboost
 joblib
 pinecone
 psycopg[binary]
