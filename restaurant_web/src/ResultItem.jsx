@@ -15,6 +15,12 @@ export default function ResultItem({ item, index, locateRight }) {
         .filter(Boolean)
         .join(" | ");
     const cuisine = restaurant.cuisines_meta || item?.food_type || "N/A";
+    const area = restaurant.area_meta || "";
+    const category = (restaurant.category_raw || "")
+        .split("||")
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .join(" | ");
     const hasDelivery = Number(restaurant.delivery_flag) === 1;
     const hasBooking = Number(restaurant.booking_flag) === 1;
     const metrics = {
@@ -59,6 +65,24 @@ export default function ResultItem({ item, index, locateRight }) {
         if (typeof value !== "number") return "0";
         return value.toLocaleString("vi-VN");
     };
+
+    const formatOpeningHour = (raw) => {
+        if (!raw || typeof raw !== "string") return "-";
+        const matches = raw.match(/\d{2}:\d{2}/g);
+        if (!matches || matches.length < 2) return "-";
+        return `${matches[0]} - ${matches[1]}`;
+    };
+
+
+    const openingHours = [
+        { day: "T2", value: formatOpeningHour(restaurant.thu_hai) },
+        { day: "T3", value: formatOpeningHour(restaurant.thu_ba) },
+        { day: "T4", value: formatOpeningHour(restaurant.thu_tu) },
+        { day: "T5", value: formatOpeningHour(restaurant.thu_nam) },
+        { day: "T6", value: formatOpeningHour(restaurant.thu_sau) },
+        { day: "T7", value: formatOpeningHour(restaurant.thu_bay) },
+        { day: "CN", value: formatOpeningHour(restaurant.chu_nhat) },
+    ];
 
     useEffect(() => {
         const observer = new IntersectionObserver(([entry]) => {
@@ -115,15 +139,23 @@ export default function ResultItem({ item, index, locateRight }) {
                     </div>
                     <h2 className="text-3xl font-bold mb-1 tracking-tight">{name}</h2>
                     <p className="text-on-surface-variant font-medium mb-3">{address || "Đang cập nhật"}</p>
-                    {targetAudience && (
-                        <p className="text-on-surface-variant/80 text-sm mb-4">{targetAudience}</p>
-                    )}
-                    <div className="flex flex-wrap items-center gap-4 text-on-surface-variant mb-6 text-sm">
+
+                    <div className="flex flex-wrap items-center gap-4 text-on-surface-variant mb-4 text-sm">
                         <span className="font-semibold text-primary">{cuisine}</span>
                         <span className="w-1 h-1 rounded-full bg-outline-variant"></span>
                         <span className="font-medium">{priceRange}</span>
                     </div>
-
+                    
+                    {area && (
+                        <p className="text-on-surface-variant/80 text-sm mb-2"><span className="font-bold mr-1">Khu vực:</span> {area}</p>
+                    )}
+                    {category && (
+                        <p className="text-on-surface-variant/80 text-sm mb-2"><span className="font-bold mr-1">Kiểu quán:</span> {category}</p>
+                    )}
+                    {targetAudience && (
+                        <p className="text-on-surface-variant/80 text-sm mb-4"><span className="font-bold mr-1">Đối tượng:</span> {targetAudience}</p>
+                    )}
+                    
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-4 gap-x-6 mb-8 bg-surface-container-low p-6 rounded-xl">
                         <div className="flex flex-col gap-1">
                             <div className="flex items-center gap-1 text-on-surface-variant">
@@ -193,6 +225,18 @@ export default function ResultItem({ item, index, locateRight }) {
                         <div className="bg-surface-container-low rounded-lg px-3 py-2">
                             <p className="text-[11px] uppercase font-semibold tracking-wide text-on-surface-variant">Check-ins</p>
                             <p className="text-base font-bold">{formatCount(stats.totalcheckins)}</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-surface-container-low rounded-xl p-4 mb-8">
+                        <p className="text-[11px] uppercase font-semibold tracking-wide text-on-surface-variant mb-3">Giờ mở cửa</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {openingHours.map((itemHour) => (
+                                <div key={itemHour.day} className="bg-surface-container-high rounded-lg px-3 py-2">
+                                    <p className="text-[11px] uppercase font-semibold text-on-surface-variant">{itemHour.day}</p>
+                                    <p className="text-xs font-semibold">{itemHour.value}</p>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
@@ -248,14 +292,22 @@ export default function ResultItem({ item, index, locateRight }) {
                     </div>
                     <h2 className="text-3xl font-bold mb-1 tracking-tight">{name}</h2>
                     <p className="text-on-surface-variant font-medium mb-3">{address || "Đang cập nhật"}</p>
-                    {targetAudience && (
-                        <p className="text-on-surface-variant/80 text-sm mb-4">{targetAudience}</p>
-                    )}
-                    <div className="flex flex-wrap items-center gap-4 text-on-surface-variant mb-6 text-sm">
+
+                    <div className="flex flex-wrap items-center gap-4 text-on-surface-variant mb-4 text-sm">
                         <span className="font-semibold text-primary">{cuisine}</span>
                         <span className="w-1 h-1 rounded-full bg-outline-variant" />
                         <span className="font-medium">{priceRange}</span>
                     </div>
+
+                    {area && (
+                        <p className="text-on-surface-variant/80 text-sm mb-2"><span className="font-bold mr-1">Khu vực:</span> {area}</p>
+                    )}
+                    {category && (
+                        <p className="text-on-surface-variant/80 text-sm mb-2"><span className="font-bold mr-1">Kiểu quán:</span> {category}</p>
+                    )}
+                    {targetAudience && (
+                        <p className="text-on-surface-variant/80 text-sm mb-4"><span className="font-bold mr-1">Đối tượng:</span> {targetAudience}</p>
+                    )}
 
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-4 gap-x-6 mb-8 bg-surface-container-low p-6 rounded-xl">
                         <div className="flex flex-col gap-1">
@@ -326,6 +378,18 @@ export default function ResultItem({ item, index, locateRight }) {
                         <div className="bg-surface-container-low rounded-lg px-3 py-2">
                             <p className="text-[11px] uppercase font-semibold tracking-wide text-on-surface-variant">Check-ins</p>
                             <p className="text-base font-bold">{formatCount(stats.totalcheckins)}</p>
+                        </div>
+                    </div>
+
+                    <div className="bg-surface-container-low rounded-xl p-4 mb-8">
+                        <p className="text-[11px] uppercase font-semibold tracking-wide text-on-surface-variant mb-3">Giờ mở cửa</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {openingHours.map((itemHour) => (
+                                <div key={itemHour.day} className="bg-surface-container-high rounded-lg px-3 py-2">
+                                    <p className="text-[11px] uppercase font-semibold text-on-surface-variant">{itemHour.day}</p>
+                                    <p className="text-xs font-semibold">{itemHour.value}</p>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
