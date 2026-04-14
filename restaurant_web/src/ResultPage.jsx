@@ -18,7 +18,7 @@ export default function ResultPage({ results = [], isLoading = false }) {
             : `Our AI analyzed ${results.length} spots with your request`}
         </p>
       </header>
-      {/* Results Grid */}
+
       <div className="flex flex-col gap-16">
         {isLoading && (
           <div className="bg-surface-container-low rounded-xl p-8 text-on-surface-variant text-center">
