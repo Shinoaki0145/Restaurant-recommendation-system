@@ -16,9 +16,14 @@ load_dotenv(BACKEND_DIR / ".env")
 
 
 def _load_embed_text():
-    from dataset.embed_model import embed_text
+    try:
+        from embed_model import embed_text
 
-    return embed_text
+        return embed_text
+    except ImportError:
+        from dataset.embed_model import embed_text
+
+        return embed_text
 
 
 def get_pinecone_api_key() -> str:
