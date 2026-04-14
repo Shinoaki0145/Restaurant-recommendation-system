@@ -113,6 +113,7 @@ RESPONSE_ALIAS_COLUMNS = [
     "target_audience_raw",
     "category_raw",
     "restaurant_url",
+    "picturemodel",
     "pricemin",
     "pricemax",
     *RATING_COLUMNS,
