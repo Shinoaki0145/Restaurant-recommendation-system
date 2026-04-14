@@ -118,11 +118,7 @@ app.add_middleware(
 def get_repository() -> RestaurantRepository:
     global _repository
     if _repository is None:
-        _repository = RestaurantRepository(
-            csv_path=RESTAURANTS_PATH,
-            db_enabled=True,
-            allow_csv_fallback=False,
-        )
+        _repository = RestaurantRepository(db_enabled=True)
     return _repository
 
 
@@ -153,7 +149,7 @@ def rank_restaurants(payload: RankRequest) -> dict[str, Any]:
             retrieval_matches = search_candidates(
                 query=payload.query,
                 top_k=payload.pinecone_top_k,
-                include_metadata=True,
+                include_metadata=False,
             )
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Pinecone retrieval failed: {exc}") from exc
@@ -173,10 +169,10 @@ def rank_restaurants(payload: RankRequest) -> dict[str, Any]:
     if repository_info.get("db_error") and candidate_rows.empty:
         raise HTTPException(
             status_code=503,
-            detail=f"Supabase fetch failed: {repository_info['db_error']}",
+            detail=f"Database fetch failed: {repository_info['db_error']}",
         )
     if candidate_rows.empty:
-        raise HTTPException(status_code=404, detail="No restaurant metadata was found in Supabase for the retrieved candidate IDs")
+        raise HTTPException(status_code=404, detail="No restaurant metadata was found in the database for the retrieved candidate IDs")
 
     try:
         results = service.rank(

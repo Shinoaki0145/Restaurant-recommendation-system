@@ -29,14 +29,10 @@ sys.modules.setdefault("restaurant_ranker", sys.modules[__name__])
 RANDOM_STATE = 42
 MODEL_VERSION = "ridge-notebook-v3"
 
-DEFAULT_LABELS_PATH = PROJECT_ROOT / "dataset" / "restaurant_dataset_ver1.csv"
+DEFAULT_LABELS_PATH = PROJECT_ROOT / "dataset" / "restaurant_dataset.csv"
 DEFAULT_RESTAURANTS_PATH = PROJECT_ROOT / "dataset" / "foody_combined_data_final.csv"
 DEFAULT_ARTIFACT_PATH = BACKEND_DIR / "artifacts" / "restaurant_ranker.joblib"
 DEFAULT_METRICS_PATH = BACKEND_DIR / "artifacts" / "restaurant_ranker_metrics.json"
-DEFAULT_IMAGE_URL = (
-    "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4"
-    "?auto=format&fit=crop&w=1200&q=80"
-)
 
 STOPWORDS = {
     "toi",
@@ -102,7 +98,7 @@ DAY_COLUMNS = [
     "thu_bay",
 ]
 
-RESPONSE_ALIAS_COLUMNS = [
+RESPONSE_COLUMNS = [
     "restaurant_id",
     "restaurant_name_meta",
     "address_meta",
@@ -113,7 +109,6 @@ RESPONSE_ALIAS_COLUMNS = [
     "target_audience_raw",
     "category_raw",
     "restaurant_url",
-    "picturemodel",
     "pricemin",
     "pricemax",
     *RATING_COLUMNS,
@@ -255,10 +250,6 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _json_safe_dict(record: dict[str, Any]) -> dict[str, Any]:
-    return {str(key): _json_safe(value) for key, value in record.items()}
-
-
 def prepare_restaurant_catalog(raw_df: pd.DataFrame) -> pd.DataFrame:
     df = raw_df.copy()
     df.columns = [slugify_column_name(column) for column in df.columns]
@@ -304,9 +295,11 @@ def prepare_restaurant_catalog(raw_df: pd.DataFrame) -> pd.DataFrame:
             df["image"] = df["thumbnail"]
         elif "thumbnail_url" in df.columns:
             df["image"] = df["thumbnail_url"]
+        elif "picturemodel" in df.columns:
+            df["image"] = df["picturemodel"]
         else:
-            df["image"] = DEFAULT_IMAGE_URL
-    df["image"] = df["image"].replace("", DEFAULT_IMAGE_URL).fillna(DEFAULT_IMAGE_URL)
+            df["image"] = None
+    df["image"] = df["image"].replace("", None)
 
     return df
 
@@ -751,14 +744,14 @@ class RestaurantRankerService:
         query: str,
         candidate_restaurant_ids: list[str | int],
         candidate_restaurants: pd.DataFrame | None = None,
-    ) -> tuple[pd.DataFrame, dict[str, dict[str, Any]]]:
+    ) -> pd.DataFrame:
         normalized_ids = [normalize_restaurant_id(value) for value in candidate_restaurant_ids]
         normalized_ids = [value for value in normalized_ids if value]
         if not normalized_ids:
             raise ValueError("candidate_restaurant_ids must contain at least one valid restaurant id")
 
         if candidate_restaurants is None or candidate_restaurants.empty:
-            raise ValueError("candidate_restaurants must be provided from the repository; CSV fallback is disabled")
+            raise ValueError("candidate_restaurants must be provided from the repository")
 
         raw_df = candidate_restaurants.copy()
         raw_df.columns = [str(column) for column in raw_df.columns]
@@ -772,12 +765,6 @@ class RestaurantRankerService:
 
         raw_df["_restaurant_id_norm"] = raw_df[raw_id_col].map(normalize_restaurant_id)
         raw_df = raw_df[raw_df["_restaurant_id_norm"].isin(normalized_ids)].copy()
-        raw_payload_by_id = {
-            record["_restaurant_id_norm"]: _json_safe_dict(
-                {key: value for key, value in record.items() if key != "_restaurant_id_norm"}
-            )
-            for record in raw_df.to_dict(orient="records")
-        }
         raw_df = raw_df.drop(columns=["_restaurant_id_norm"])
         catalog_df = prepare_restaurant_catalog(raw_df)
 
@@ -790,7 +777,7 @@ class RestaurantRankerService:
 
         pair_df = _build_rank_pairs(query=query, catalog_df=catalog_df)
         feature_df = build_restaurant_features(pair_df, self.feature_artifacts)
-        return feature_df, raw_payload_by_id
+        return feature_df
 
     def _build_score_breakdown(self, row: pd.Series) -> dict[str, Any]:
         feature_values = {feature: float(row.get(feature, 0.0)) for feature in self.feature_columns}
@@ -821,7 +808,7 @@ class RestaurantRankerService:
         if not str(query).strip():
             raise ValueError("query must not be empty")
 
-        feature_df, raw_payload_by_id = self._build_feature_frame_for_query(
+        feature_df = self._build_feature_frame_for_query(
             query=query,
             candidate_restaurant_ids=candidate_restaurant_ids,
             candidate_restaurants=candidate_restaurants,
@@ -835,23 +822,21 @@ class RestaurantRankerService:
         results: list[dict[str, Any]] = []
         for _, row in ranked_df.iterrows():
             restaurant_id = normalize_restaurant_id(row["restaurant_id"])
-            raw_payload = raw_payload_by_id.get(restaurant_id, {})
-            compatibility_payload = {
+            restaurant_payload = {
                 column: _json_safe(row[column])
-                for column in RESPONSE_ALIAS_COLUMNS
+                for column in RESPONSE_COLUMNS
                 if column in row.index
             }
-            compatibility_payload["restaurant_id"] = restaurant_id
-            compatibility_payload["image"] = compatibility_payload.get("image") or DEFAULT_IMAGE_URL
-
-            restaurant_payload = {**raw_payload, **compatibility_payload}
-            restaurant_payload.setdefault("image", DEFAULT_IMAGE_URL)
+            restaurant_payload["restaurant_id"] = restaurant_id
+            if not restaurant_payload.get("image"):
+                restaurant_payload["image"] = None
 
             results.append(
                 {
                     "restaurant_id": restaurant_id,
                     "rank_score": float(row["rank_score"]),
                     "score_breakdown": self._build_score_breakdown(row),
+                    "image": restaurant_payload.get("image"),
                     "restaurant": restaurant_payload,
                 }
             )

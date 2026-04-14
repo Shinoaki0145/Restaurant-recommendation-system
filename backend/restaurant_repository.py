@@ -17,9 +17,9 @@ if not __package__ and str(PROJECT_ROOT) not in sys.path:
 load_dotenv(BACKEND_DIR / ".env")
 
 if __package__:
-    from .restaurant_ranker import DEFAULT_RESTAURANTS_PATH, normalize_restaurant_id, slugify_column_name
+    from .restaurant_ranker import normalize_restaurant_id, slugify_column_name
 else:
-    from backend.restaurant_ranker import DEFAULT_RESTAURANTS_PATH, normalize_restaurant_id, slugify_column_name
+    from backend.restaurant_ranker import normalize_restaurant_id, slugify_column_name
 
 
 def _is_placeholder(value: str) -> bool:
@@ -60,21 +60,16 @@ def _build_database_url() -> str:
 class RestaurantRepository:
     def __init__(
         self,
-        csv_path: Path | str = DEFAULT_RESTAURANTS_PATH,
         db_enabled: bool | None = None,
-        allow_csv_fallback: bool | None = None,
         database_url: str | None = None,
         table_name: str | None = None,
         id_column: str | None = None,
     ) -> None:
-        self.csv_path = Path(csv_path)
         self.db_enabled = (
             str(os.getenv("RESTAURANT_DB_ENABLED", "false")).strip().lower() in {"1", "true", "yes"}
             if db_enabled is None
             else bool(db_enabled)
         )
-        # Runtime inference must always use repository metadata rather than local CSV fallback.
-        self.allow_csv_fallback = False
         self.database_url = database_url or _build_database_url()
         self.table_name = table_name or os.getenv("RESTAURANT_DB_TABLE") or "restaurants"
         self.id_column = id_column or os.getenv("RESTAURANT_DB_ID_COLUMN") or "restaurant_id"
@@ -161,9 +156,7 @@ class RestaurantRepository:
     def health(self) -> dict[str, Any]:
         db_ready = self.db_enabled and not _is_placeholder(self.database_url)
         return {
-            "csv_path": str(self.csv_path),
             "db_enabled": self.db_enabled,
-            "allow_csv_fallback": self.allow_csv_fallback,
             "db_ready": db_ready,
             "db_table": self.table_name,
             "db_id_column": self.id_column,

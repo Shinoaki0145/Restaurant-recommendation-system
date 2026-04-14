@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import json
 import os
 import sys
 from pathlib import Path
@@ -71,25 +69,21 @@ def embed_query(query: str) -> list[float]:
     return convert_embedding(query_embedding)
 
 
-def search(index, query: str, top_k: int = 30, include_metadata: bool = True):
-    query_embedding = embed_query(query)
-    return index.query(
-        vector=query_embedding,
-        top_k=top_k,
-        include_metadata=include_metadata,
-    )
-
-
 def search_candidates(
     query: str,
     top_k: int = 30,
     index=None,
-    include_metadata: bool = True,
+    include_metadata: bool = False,
 ) -> list[dict[str, Any]]:
     if index is None:
         index = get_pinecone_index()
 
-    results = search(index=index, query=query, top_k=top_k, include_metadata=include_metadata)
+    query_embedding = embed_query(query)
+    results = index.query(
+        vector=query_embedding,
+        top_k=top_k,
+        include_metadata=include_metadata,
+    )
     matches = results.get("matches", []) if isinstance(results, dict) else getattr(results, "matches", [])
 
     normalized: list[dict[str, Any]] = []
@@ -111,35 +105,3 @@ def search_candidates(
                 }
             )
     return normalized
-
-
-def write_csv(matches: list[dict[str, Any]], filename: str = "search_results.csv") -> None:
-    with open(filename, mode="w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow(["ID", "Score", "Metadata"])
-        for match in matches:
-            writer.writerow(
-                [
-                    match["id"],
-                    match["score"],
-                    json.dumps(match.get("metadata") or {}, ensure_ascii=False),
-                ]
-            )
-
-
-def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage:")
-        print("  python search.py your query here [top_k]")
-        raise SystemExit(1)
-
-    query = " ".join(sys.argv[1:-1]) if len(sys.argv) > 2 and sys.argv[-1].isdigit() else " ".join(sys.argv[1:])
-    top_k = int(sys.argv[-1]) if sys.argv[-1].isdigit() else 30
-
-    matches = search_candidates(query=query, top_k=top_k, include_metadata=True)
-    write_csv(matches)
-    print(f"Done! Saved top {top_k} results to search_results.csv")
-
-
-if __name__ == "__main__":
-    main()

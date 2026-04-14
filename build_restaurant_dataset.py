@@ -2,17 +2,19 @@ import json
 import random
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 from openai import OpenAI
 from pinecone import Pinecone
 
-QUERY_FILE = "restaurant_queries.txt"
-CSV_PATH = "foody_combined_data_final.csv"
-OUTPUT_CSV = "restaurant_dataset.csv"
-DEBUG_CSV = "restaurant_dataset_debug.csv"
-CHECKPOINT_JSONL = "restaurant_dataset_checkpoint.jsonl"
+
+QUERY_FILE = Path("dataset/restaurant_queries.txt")
+CSV_PATH = Path("dataset/foody_combined_data_final.csv")
+OUTPUT_CSV = Path("dataset/restaurant_dataset.csv")
+DEBUG_CSV = Path("dataset/restaurant_dataset_debug.csv")
+CHECKPOINT_JSONL = Path("dataset/restaurant_dataset_checkpoint.jsonl")
 
 PINECONE_API_KEY = "xxx"
 INDEX_NAME = "restaurant"
@@ -20,7 +22,7 @@ OPENAI_API_KEY = "xxx"
 LLM_MODEL = "gpt-4.1-mini"
 
 TOP_K = 15
-RANDOM_K = 5
+RANDOM_K = 0
 SEED = 42
 PINECONE_OVERFETCH_FACTOR = 4
 PINECONE_MAX_RETRIES = 4
@@ -132,7 +134,7 @@ def preprocess_restaurant_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_restaurant_df(csv_path: str) -> pd.DataFrame:
+def load_restaurant_df(csv_path: Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
     df = preprocess_restaurant_df(df)
     df = df.fillna("")
