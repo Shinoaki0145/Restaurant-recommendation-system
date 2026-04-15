@@ -1,0 +1,16 @@
+ipython
+lightgbm
+matplotlib
+numpy
+pandas
+scikit-learn
+xgboost
+fastapi
+uvicorn
+python-dotenv
+sqlalchemy
+joblib
+pinecone
+psycopg[binary]
+transformers
+torch
