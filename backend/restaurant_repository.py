@@ -1,25 +1,20 @@
+"""Repository layer for loading restaurant metadata needed by the API."""
+
 from __future__ import annotations
 
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 
 BACKEND_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BACKEND_DIR.parent
-if not __package__ and str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 load_dotenv(BACKEND_DIR / ".env")
 
-if __package__:
-    from .restaurant_ranker import normalize_restaurant_id, slugify_column_name
-else:
-    from backend.restaurant_ranker import normalize_restaurant_id, slugify_column_name
+from .restaurant_ranker import normalize_restaurant_id, slugify_column_name
 
 
 def _is_placeholder(value: str) -> bool:
@@ -57,6 +52,22 @@ def _build_database_url() -> str:
     return f"postgresql://{user}:{password}@{host}:{port}/{name}"
 
 
+def _normalize_sqlalchemy_url(database_url: str) -> str:
+    if not database_url or "://" not in database_url:
+        return database_url
+
+    scheme, rest = database_url.split("://", 1)
+    if "+" in scheme or scheme != "postgresql":
+        return database_url
+
+    try:
+        import psycopg  # noqa: F401
+
+        return f"postgresql+psycopg://{rest}"
+    except ImportError:
+        return database_url
+
+
 class RestaurantRepository:
     def __init__(
         self,
@@ -71,21 +82,9 @@ class RestaurantRepository:
             else bool(db_enabled)
         )
         self.database_url = database_url or _build_database_url()
+        self.sqlalchemy_url = _normalize_sqlalchemy_url(self.database_url)
         self.table_name = table_name or os.getenv("RESTAURANT_DB_TABLE") or "restaurants"
         self.id_column = id_column or os.getenv("RESTAURANT_DB_ID_COLUMN") or "restaurant_id"
-
-    def _get_postgres_driver(self):
-        try:
-            import psycopg
-
-            return "psycopg", psycopg
-        except ImportError:
-            try:
-                import psycopg2
-
-                return "psycopg2", psycopg2
-            except ImportError as exc:
-                raise RuntimeError("No PostgreSQL driver found. Install 'psycopg' or 'psycopg2-binary'.") from exc
 
     def _fetch_from_postgres(self, restaurant_ids: list[str]) -> pd.DataFrame:
         if not self.db_enabled:
@@ -95,19 +94,13 @@ class RestaurantRepository:
 
         table_name = _quote_identifier(self.table_name)
         id_column = _quote_identifier(self.id_column)
-        placeholders = ",".join(["%s"] * len(restaurant_ids))
-        query = f"SELECT * FROM {table_name} WHERE CAST({id_column} AS TEXT) IN ({placeholders})"
+        params = {f"id_{index}": restaurant_id for index, restaurant_id in enumerate(restaurant_ids)}
+        placeholders = ", ".join(f":id_{index}" for index in range(len(restaurant_ids)))
+        query = text(f"SELECT * FROM {table_name} WHERE CAST({id_column} AS TEXT) IN ({placeholders})")
 
-        driver_name, driver = self._get_postgres_driver()
-        if driver_name == "psycopg":
-            with driver.connect(self.database_url) as conn:
-                return pd.read_sql_query(query, conn, params=restaurant_ids)
-
-        conn = driver.connect(self.database_url)
-        try:
-            return pd.read_sql_query(query, conn, params=restaurant_ids)
-        finally:
-            conn.close()
+        engine = create_engine(self.sqlalchemy_url)
+        with engine.connect() as conn:
+            return pd.read_sql_query(query, conn, params=params)
 
     def fetch_by_ids(self, restaurant_ids: list[str | int]) -> tuple[pd.DataFrame, dict[str, Any]]:
         normalized_ids: list[str] = []

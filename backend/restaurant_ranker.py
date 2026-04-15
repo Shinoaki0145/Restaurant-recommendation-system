@@ -1,3 +1,11 @@
+"""Training and inference utilities for the restaurant ranker artifact.
+
+Responsibilities:
+- build features from restaurant/query data
+- train and save the ranking artifact offline
+- load an existing artifact and score candidate restaurants during inference
+"""
+
 from __future__ import annotations
 
 import inspect
@@ -149,7 +157,15 @@ class FeatureArtifacts:
     location_candidates: list[tuple[str, tuple[str, ...]]]
 
 
-def normalize_text(text: Any) -> str:
+def _register_legacy_pickle_aliases() -> None:
+    """Expose legacy class paths so old joblib artifacts remain loadable."""
+    for module_name in ("__main__", "backend.api", "api"):
+        module = sys.modules.get(module_name)
+        if module is not None and not hasattr(module, "FeatureArtifacts"):
+            setattr(module, "FeatureArtifacts", FeatureArtifacts)
+
+
+def _normalize_text_mojibake(text: Any) -> str:
     if text is None or (isinstance(text, float) and pd.isna(text)):
         return ""
     text = str(text).replace("Đ", "D").replace("đ", "d")
@@ -171,7 +187,6 @@ def _normalize_text_fixed(text: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-normalize_text = _normalize_text_fixed
 
 
 def _normalize_text_unicode_safe(text: Any) -> str:
@@ -185,7 +200,25 @@ def _normalize_text_unicode_safe(text: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-normalize_text = _normalize_text_unicode_safe
+
+def normalize_text(text: Any) -> str:
+    """Normalize text for both training and inference.
+
+    This keeps support for both valid Vietnamese characters and a mojibake form
+    seen in older datasets/artifacts.
+    """
+    if text is None or (isinstance(text, float) and pd.isna(text)):
+        return ""
+    text = str(text)
+    text = text.replace("\u0110", "D").replace("\u0111", "d")
+    text = text.replace("Ä", "D").replace("Ä‘", "d")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s-]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 
 
 def slugify_column_name(column_name: Any) -> str:
@@ -693,6 +726,7 @@ class RestaurantRankerService:
 
     @classmethod
     def load(cls, artifact_path: Path | str = DEFAULT_ARTIFACT_PATH) -> "RestaurantRankerService":
+        _register_legacy_pickle_aliases()
         payload = joblib.load(artifact_path)
         if payload.get("model_version") != MODEL_VERSION:
             raise ValueError("Artifact version is outdated")
@@ -713,6 +747,7 @@ class RestaurantRankerService:
         metrics_path: Path | str | None = DEFAULT_METRICS_PATH,
         force_retrain: bool = False,
     ) -> "RestaurantRankerService":
+        # Convenience helper for notebooks/scripts. The API should load only.
         artifact_target = Path(artifact_path)
         if not force_retrain and artifact_target.exists():
             try:

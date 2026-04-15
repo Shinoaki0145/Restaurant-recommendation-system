@@ -1,3 +1,5 @@
+"""Candidate retrieval helpers backed by Pinecone embeddings search."""
+
 from __future__ import annotations
 
 import os

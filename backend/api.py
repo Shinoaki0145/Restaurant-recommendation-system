@@ -1,86 +1,93 @@
+"""Inference-only FastAPI entrypoint for the restaurant ranking service.
+
+Responsibilities:
+- validate API requests
+- retrieve candidate restaurant IDs from the request or Pinecone
+- fetch candidate restaurant metadata from the repository
+- load a pre-trained ranker artifact and return ranking results
+
+This module never trains a model. If the artifact is missing, the caller is
+asked to train it first via ``python -m backend.restaurant_ranker``.
+"""
+
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 import os
-import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-BACKEND_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BACKEND_DIR.parent
-if not __package__ and str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from .restaurant_ranker import (
+    DEFAULT_ARTIFACT_PATH,
+    RestaurantRankerService,
+    normalize_restaurant_id,
+)
+from .restaurant_repository import RestaurantRepository
+from .search import search_candidates
 
+BACKEND_DIR = Path(__file__).resolve().parent
 load_dotenv(BACKEND_DIR / ".env")
 
-if __package__:
-    from .restaurant_ranker import (
-        DEFAULT_ARTIFACT_PATH,
-        DEFAULT_RESTAURANTS_PATH,
-        RestaurantRankerService,
-        normalize_restaurant_id,
+TRAIN_COMMAND = "python -m backend.restaurant_ranker"
+
+
+def resolve_artifact_path() -> Path:
+    configured_path = (os.getenv("RANKER_ARTIFACT_PATH") or "").strip()
+    artifact_path = Path(configured_path) if configured_path else DEFAULT_ARTIFACT_PATH
+    if artifact_path.is_absolute():
+        return artifact_path
+    return (BACKEND_DIR / artifact_path).resolve()
+
+
+ARTIFACT_PATH = resolve_artifact_path()
+
+_service: RestaurantRankerService | None = None
+_repository: RestaurantRepository | None = None
+
+
+class ServiceNotReadyError(RuntimeError):
+    """Raised when the API cannot serve inference requests yet."""
+
+
+def build_missing_artifact_message(path: Path) -> str:
+    return (
+        f"Missing ranker artifact at '{path}'. "
+        f"Train it first with `{TRAIN_COMMAND}` and restart the API."
     )
-    from .restaurant_repository import RestaurantRepository
-    from .search import search_candidates
-else:
-    from backend.restaurant_ranker import (
-        DEFAULT_ARTIFACT_PATH,
-        DEFAULT_RESTAURANTS_PATH,
-        RestaurantRankerService,
-        normalize_restaurant_id,
-    )
-    from backend.restaurant_repository import RestaurantRepository
-    from backend.search import search_candidates
-
-_service: Optional[RestaurantRankerService] = None
-_repository: Optional[RestaurantRepository] = None
 
 
-def resolve_config_path(env_name: str, default_path: Path, preferred_base: Path) -> Path:
-    raw_value = (os.getenv(env_name) or "").strip()
-    if not raw_value:
-        return default_path
-
-    configured_path = Path(raw_value)
-    if configured_path.is_absolute():
-        return configured_path
-
-    candidates: list[Path] = []
-    for base_dir in (preferred_base, PROJECT_ROOT, BACKEND_DIR, Path.cwd()):
-        candidate = base_dir / configured_path
-        if candidate not in candidates:
-            candidates.append(candidate)
-
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-
-    return preferred_base / configured_path
+def normalize_candidate_ids(values: list[str | int]) -> list[str]:
+    normalized_ids: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized_value = normalize_restaurant_id(value)
+        if normalized_value and normalized_value not in seen:
+            seen.add(normalized_value)
+            normalized_ids.append(normalized_value)
+    return normalized_ids
 
 
-RESTAURANTS_PATH = resolve_config_path(
-    env_name="RANKER_RESTAURANTS_PATH",
-    default_path=DEFAULT_RESTAURANTS_PATH,
-    preferred_base=PROJECT_ROOT,
-)
-ARTIFACT_PATH = resolve_config_path(
-    env_name="RANKER_ARTIFACT_PATH",
-    default_path=DEFAULT_ARTIFACT_PATH,
-    preferred_base=BACKEND_DIR,
-)
+def attach_retrieval_scores(results: list[dict[str, Any]], retrieval_matches: list[dict[str, Any]]) -> None:
+    retrieval_score_by_id = {
+        normalize_restaurant_id(match["id"]): float(match["score"])
+        for match in retrieval_matches
+        if normalize_restaurant_id(match["id"])
+    }
+    for item in results:
+        restaurant_id = normalize_restaurant_id(item["restaurant_id"])
+        if restaurant_id in retrieval_score_by_id:
+            item["retrieval_score"] = retrieval_score_by_id[restaurant_id]
 
 
 class RankRequest(BaseModel):
     query: str = Field(..., description="Natural-language restaurant query")
     top_k: int = Field(default=5, ge=1, le=20)
     pinecone_top_k: int = Field(default=30, ge=1, le=100)
-    candidate_restaurant_ids: Optional[list[str | int]] = Field(
+    candidate_restaurant_ids: list[str | int] | None = Field(
         default=None,
         description="Optional candidate IDs. If omitted, the API will try Pinecone first.",
     )
@@ -90,21 +97,18 @@ class RankRequest(BaseModel):
 def get_service() -> RestaurantRankerService:
     global _service
     if _service is None:
-        _service = RestaurantRankerService.load_or_train(
-            artifact_path=ARTIFACT_PATH,
-            restaurants_path=RESTAURANTS_PATH,
-            metrics_path=ARTIFACT_PATH.with_name("restaurant_ranker_metrics.json"),
-        )
+        if not ARTIFACT_PATH.exists():
+            raise ServiceNotReadyError(build_missing_artifact_message(ARTIFACT_PATH))
+        try:
+            _service = RestaurantRankerService.load(ARTIFACT_PATH)
+        except FileNotFoundError as exc:
+            raise ServiceNotReadyError(build_missing_artifact_message(ARTIFACT_PATH)) from exc
+        except Exception as exc:
+            raise ServiceNotReadyError(f"Failed to load ranker artifact '{ARTIFACT_PATH}': {exc}") from exc
     return _service
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    get_service()
-    yield
-
-
-app = FastAPI(title="Restaurant Ranking API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Restaurant Ranking API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -118,31 +122,43 @@ app.add_middleware(
 def get_repository() -> RestaurantRepository:
     global _repository
     if _repository is None:
-        _repository = RestaurantRepository(db_enabled=True)
+        _repository = RestaurantRepository()
     return _repository
 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    service = get_service()
     repository = get_repository()
+    ranker_status: dict[str, Any] = {
+        "artifact_path": str(ARTIFACT_PATH),
+        "artifact_exists": ARTIFACT_PATH.exists(),
+        "ready": False,
+    }
+    try:
+        ranker_status.update(get_service().health())
+        ranker_status["ready"] = True
+    except ServiceNotReadyError as exc:
+        ranker_status["error"] = str(exc)
     return {
-        "status": "ok",
-        "ranker": service.health(),
+        "status": "ok" if ranker_status["ready"] else "degraded",
+        "ranker": ranker_status,
         "repository": repository.health(),
     }
 
 
 @app.post("/rank")
 def rank_restaurants(payload: RankRequest) -> dict[str, Any]:
-    service = get_service()
+    try:
+        service = get_service()
+    except ServiceNotReadyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     repository = get_repository()
 
     retrieval_matches: list[dict[str, Any]] = []
     candidate_ids: list[str] = []
 
     if payload.candidate_restaurant_ids:
-        candidate_ids = [normalize_restaurant_id(value) for value in payload.candidate_restaurant_ids if normalize_restaurant_id(value)]
+        candidate_ids = normalize_candidate_ids(payload.candidate_restaurant_ids)
         retrieval_source = "request"
     elif payload.use_pinecone:
         try:
@@ -154,7 +170,7 @@ def rank_restaurants(payload: RankRequest) -> dict[str, Any]:
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Pinecone retrieval failed: {exc}") from exc
 
-        candidate_ids = [normalize_restaurant_id(match["id"]) for match in retrieval_matches if normalize_restaurant_id(match["id"])]
+        candidate_ids = normalize_candidate_ids([match["id"] for match in retrieval_matches])
         retrieval_source = "pinecone"
     else:
         raise HTTPException(
@@ -186,15 +202,7 @@ def rank_restaurants(payload: RankRequest) -> dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Ranking failed: {exc}") from exc
 
-    retrieval_score_by_id = {
-        normalize_restaurant_id(match["id"]): float(match["score"])
-        for match in retrieval_matches
-        if normalize_restaurant_id(match["id"])
-    }
-    for item in results:
-        restaurant_id = normalize_restaurant_id(item["restaurant_id"])
-        if restaurant_id in retrieval_score_by_id:
-            item["retrieval_score"] = retrieval_score_by_id[restaurant_id]
+    attach_retrieval_scores(results, retrieval_matches)
 
     response = {
         "query": payload.query,
@@ -204,10 +212,10 @@ def rank_restaurants(payload: RankRequest) -> dict[str, Any]:
         "repository": repository_info,
         "results": results,
     }
-    return jsonable_encoder(response)
+    return response
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("backend.api:app", host="0.0.0.0", port=8000, reload=False)

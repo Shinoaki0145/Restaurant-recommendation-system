@@ -1,0 +1,19 @@
+{
+  "model_version": "ridge-notebook-v3",
+  "model_name": "Ridge Ranker",
+  "feature_columns": [
+    "text_match",
+    "location_match",
+    "price_fit",
+    "rating_mean",
+    "popularity_score",
+    "service_match"
+  ],
+  "training_rows": 7500,
+  "training_queries": 500,
+  "best_params": {
+    "model__alpha": 10.0
+  },
+  "training_time_s": 0.0037597999908030033,
+  "selection_source": "Selected from modelling.ipynb"
+}
