@@ -12,6 +12,7 @@ venv/
 env/
 
 search_results.csv
+backend/artifacts/
 
 restaurant_web/node_modules/
 restaurant_web/dist/
