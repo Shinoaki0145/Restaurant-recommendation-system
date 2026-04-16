@@ -11,8 +11,7 @@ npm run dev
 
 ## Notes
 
-- Frontend local env can stay in [`.env`](./.env) if needed.
-- Backend co env rieng trong [`../backend/.env`](../backend/.env).
-- Model artifacts are stored in [`../backend/artifacts/`](../backend/artifacts/).
-- Training data still stays in [`../dataset/`](../dataset/) to avoid duplicating large CSV files.
-- Inference after Pinecone is configured as Supabase-only for restaurant metadata.
+- Frontend goi API qua duong dan `/rank` va `/health`, Vite se proxy local dev sang `http://localhost:8000`.
+- Neu deploy frontend va backend o 2 domain khac nhau, set `VITE_API_BASE_URL` luc build frontend.
+- Backend co the doc env tu `BACKEND_ENV_FILE`, root `.env`, hoac `backend/.env`.
+- Model artifact co the nam ngoai repo neu set `RANKER_ARTIFACT_PATH`.

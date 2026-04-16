@@ -14,4 +14,16 @@ export default defineConfig({
     ),
     tailwindcss()
   ],
+  server: {
+    proxy: {
+      '/health': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/rank': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
 })

@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from . import PROJECT_ROOT, load_backend_environment
 
-BACKEND_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BACKEND_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-load_dotenv(BACKEND_DIR / ".env")
+load_backend_environment()
 
 
 def _load_embed_text():

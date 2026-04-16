@@ -4,12 +4,14 @@ import Home from './Home';
 import { Routes, Route } from "react-router-dom";
 import ResultPage from './ResultPage';
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
 function App() {
   const [results, setResults] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const fetchRecommendations = async (query) => {
-    const response = await fetch("http://localhost:8000/rank", {
+    const response = await fetch(`${API_BASE_URL}/rank`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

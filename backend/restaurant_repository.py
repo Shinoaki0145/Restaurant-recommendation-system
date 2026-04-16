@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-BACKEND_DIR = Path(__file__).resolve().parent
-load_dotenv(BACKEND_DIR / ".env")
+from . import load_backend_environment
+
+load_backend_environment()
 
 from .restaurant_ranker import normalize_restaurant_id, slugify_column_name
 
